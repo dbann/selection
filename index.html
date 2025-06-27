@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Missing Data / Selection Bias Visualizer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    .range-slider {
+      position: relative;
+      height: 6px;
+      background: #374151;
+      border-radius: 3px;
+      margin: 20px 0;
+    }
+    .range-track {
+      position: absolute;
+      height: 100%;
+      background: #6366f1;
+      border-radius: 3px;
+    }
+    .range-handle {
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      background: #4f46e5;
+      border: 2px solid #fff;
+      border-radius: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      cursor: pointer;
+      z-index: 2;
+    }
+    .range-handle:hover { background: #6366f1; transform: translate(-50%, -50%) scale(1.1);}
+    .range-handle.dragging { background: #6366f1; transform: translate(-50%, -50%) scale(1.2);}
+    #plot { width: 100%; height: 400px; }
+    .threshold-line { stroke-dasharray: 3,3; }
+  </style>
+</head>
+<body class="bg-gray-900 text-gray-200 min-h-screen flex flex-col items-center p-6">
+
+  <div class="max-w-4xl w-full bg-gray-800 rounded-xl shadow-2xl p-6">
+    <h1 class="text-3xl font-bold text-white mb-3 text-center">Missing Data / Selection Bias Visualizer</h1>
+    <p class="text-gray-400 mb-6 text-center">Explore how regression estimates can be biased by missing data / selection.</p>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <!-- Controls -->
+      <div class="bg-gray-900/50 rounded-xl border border-gray-700 p-4 flex flex-col gap-5">
+        <div>
+          <label class="font-medium">Percent Missing</label>
+          <input id="missSlider" type="range" min="0" max="100" value="100" class="w-full mt-1">
+          <div class="text-center text-indigo-400 font-mono text-lg" id="missValue">100%</div>
+        </div>
+
+        <div>
+          <label class="font-medium">Missingness Mechanism</label>
+          <select id="mechSelect" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-2 py-2 text-white mt-1">
+            <option value="random">Completely Random</option>
+            <option value="byX">X</option>
+            <option value="byY" selected>Y</option>
+            <option value="byXorY">X + Y</option>
+            <option value="flatten">Flatter β</option>
+            <option value="steepen">Steeper β</option>
+          </select>
+        </div>
+
+        <div id="xThreshDiv" class="hidden">
+          <label class="font-medium">X range: <span id="xRangeVal" class="text-indigo-400 font-mono ml-1">[20, 80]</span></label>
+          <div class="range-slider" id="xRangeSlider">
+            <div class="range-track" id="xRangeTrack"></div>
+            <div class="range-handle" id="xMinHandle" data-value="20"></div>
+            <div class="range-handle" id="xMaxHandle" data-value="80"></div>
+          </div>
+          <div class="text-xs text-gray-500 text-center">Missing if X &lt; <span id="xMinText">20</span> or X &gt; <span id="xMaxText">80</span></div>
+        </div>
+        
+        <div id="yThreshDiv" class="hidden">
+          <label class="font-medium">Y range: <span id="yRangeVal" class="text-indigo-400 font-mono ml-1">[30, 60]</span></label>
+          <div class="range-slider" id="yRangeSlider">
+            <div class="range-track" id="yRangeTrack"></div>
+            <div class="range-handle" id="yMinHandle" data-value="30"></div>
+            <div class="range-handle" id="yMaxHandle" data-value="60"></div>
+          </div>
+          <div class="text-xs text-gray-500 text-center">Missing if Y &lt; <span id="yMinText">30</span> or Y &gt; <span id="yMaxText">60</span></div>
+        </div>
+
+        <div id="actualMissing" class="text-sm text-gray-400">
+          <span>% missing: </span><span id="actualMissingCount" class="text-indigo-400 font-mono">0%</span>
+        </div>
+
+        <button id="resample" class="mt-2 w-full bg-gray-700 hover:bg-gray-600 text-gray-300 font-medium py-1.5 rounded-lg text-sm">New Sample</button>
+
+        <div class="mt-2">
+          <span class="inline-block w-4 h-4 rounded-full bg-orange-500 mr-2"></span>Observed
+          <span class="inline-block w-4 h-4 rounded-full bg-gray-500 mx-2"></span>Missing
+        </div>
+      </div>
+      <!-- Plot and results -->
+      <div class="md:col-span-2 flex flex-col gap-2">
+        <div class="flex flex-row gap-4 justify-center items-center bg-gray-900/80 border border-gray-700 rounded-xl px-6 py-2 mb-2">
+          <div>
+            <span class="text-gray-400">True β:</span>
+            <span id="coefTrue" class="text-green-400 text-2xl font-mono font-bold">1.00</span>
+          </div>
+          <div>
+            <span class="text-gray-400">Observed β:</span>
+            <span id="coefObs" class="text-yellow-300 text-2xl font-mono font-bold">1.00</span>
+          </div>
+          <div>
+            <span class="text-gray-400">Bias:</span>
+            <span id="bias" class="text-red-400 text-2xl font-mono font-bold">0.00</span>
+          </div>
+        </div>
+        <div class="bg-gray-900 rounded-lg border border-gray-700 overflow-hidden" style="position:relative;height:400px;">
+          <canvas id="plot"></canvas>
+        </div>
+        <div id="explanation" class="text-gray-300 mt-2 p-3 text-center"></div>
+      </div>
+    </div>
+    <div class="mt-4 text-center">
+      <a href="https://github.com/dbann/selection" target="_blank" class="text-gray-500 hover:text-gray-300 text-sm">
+        GitHub • Feedback
+      </a>
+    </div>
+  </div>
+
+  <script>
+    // ======== State & Data Generation =========
+    const N = 400;
+    let points = [];
+    const trueSlope = 1;
+
+    // Range values for X/Y threshold sliders
+    let xMin = 20, xMax = 80;
+    let yMin = 30, yMax = 60;
+
+    function generateData() {
+      points = [];
+      for (let i = 0; i < N; i++) {
+        const x = Math.random() * 100;
+        const y = trueSlope * x + (Math.random() - 0.5) * 25;
+        points.push({ x, y, missing: false });
+      }
+    }
+
+    // ========= Range Slider Implementation ==============
+    function setupRangeSlider(sliderId, minHandleId, maxHandleId, trackId, min, max, onUpdate) {
+      const slider = document.getElementById(sliderId);
+      const minHandle = document.getElementById(minHandleId);
+      const maxHandle = document.getElementById(maxHandleId);
+      const track = document.getElementById(trackId);
+
+      let activeHandle = null;
+
+      function updateTrack() {
+        const minVal = parseFloat(minHandle.dataset.value);
+        const maxVal = parseFloat(maxHandle.dataset.value);
+        const minPercent = ((minVal - min) / (max - min)) * 100;
+        const maxPercent = ((maxVal - min) / (max - min)) * 100;
+
+        track.style.left = minPercent + '%';
+        track.style.width = (maxPercent - minPercent) + '%';
+
+        minHandle.style.left = minPercent + '%';
+        maxHandle.style.left = maxPercent + '%';
+      }
+
+      function handleMouseDown(e, handle) {
+        e.preventDefault();
+        activeHandle = handle;
+        handle.classList.add('dragging');
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+      }
+
+      function handleMouseMove(e) {
+        if (!activeHandle) return;
+
+        const rect = slider.getBoundingClientRect();
+        const percent = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+        const value = Math.round(min + (percent / 100) * (max - min));
+
+        if (activeHandle === minHandle) {
+          const maxVal = parseFloat(maxHandle.dataset.value);
+          if (value < maxVal - 5) {
+            activeHandle.dataset.value = value;
+            onUpdate(value, maxVal);
+          }
+        } else {
+          const minVal = parseFloat(minHandle.dataset.value);
+          if (value > minVal + 5) {
+            activeHandle.dataset.value = value;
+            onUpdate(minVal, value);
+          }
+        }
+
+        updateTrack();
+        applyMissing();
+        draw();
+      }
+
+      function handleMouseUp() {
+        if (activeHandle) {
+          activeHandle.classList.remove('dragging');
+          activeHandle = null;
+        }
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+        applyMissing();
+        draw();
+      }
+
+      minHandle.addEventListener('mousedown', (e) => handleMouseDown(e, minHandle));
+      maxHandle.addEventListener('mousedown', (e) => handleMouseDown(e, maxHandle));
+
+      updateTrack();
+    }
+
+    // ========= Missingness Logic ==============
+    function applyMissing() {
+      points.forEach(p => p.missing = false);
+      const percent = +missSlider.value;
+      const mech = mechSelect.value;
+      let candidates = [];
+
+      if (mech === "random") {
+        const nMiss = Math.floor((percent / 100) * points.length);
+        const shuffled = [...points];
+        shuffle(shuffled);
+        for (let i = 0; i < nMiss; i++) shuffled[i].missing = true;
+      } else if (mech === "byX") {
+        candidates = points.filter(p => p.x < xMin || p.x > xMax);
+      } else if (mech === "byY") {
+        candidates = points.filter(p => p.y < yMin || p.y > yMax);
+      } else if (mech === "byXorY") {
+        candidates = points.filter(
+          p => (p.x < xMin || p.x > xMax) || (p.y < yMin || p.y > yMax)
+        );
+      } else if (mech === "flatten" || mech === "steepen") {
+        // Diagonal quadrants logic:
+        // pivot at X = 50 (midpoint), trueSlope = 1 (for reference line)
+        const pivot = 50;
+        const diagFlatten = p =>
+          (p.x < pivot && p.y < trueSlope * p.x) || // lower left
+          (p.x > pivot && p.y > trueSlope * p.x);   // upper right
+
+        const diagSteepen = p =>
+          (p.x < pivot && p.y > trueSlope * p.x) || // upper left
+          (p.x > pivot && p.y < trueSlope * p.x);   // lower right
+
+        const rule = mech === "flatten" ? diagFlatten : diagSteepen;
+        candidates = points.filter(rule);
+      }
+
+      // Mark selected candidates as missing
+      if (mech !== "random") {
+        const nCandidates = candidates.length;
+        const nMiss = Math.floor((percent / 100) * nCandidates);
+        if (nCandidates > 0 && nMiss > 0) {
+          const shuffled = [...candidates];
+          shuffle(shuffled);
+          for (let i = 0; i < nMiss; i++) shuffled[i].missing = true;
+        }
+      }
+
+      updateActualMissing();
+    }
+
+    function updateActualMissing() {
+      const actualMissing = points.filter(p => p.missing).length;
+      const actualPercent = (actualMissing / points.length * 100).toFixed(1);
+      document.getElementById('actualMissingCount').textContent = `${actualPercent}%`;
+    }
+
+    function shuffle(arr) {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+    }
+
+    // ======== Regression ===========
+    function regression(arr) {
+      if (arr.length < 2) return { slope: 0, intercept: 0 };
+      const n = arr.length;
+      let sx = 0, sy = 0, sxy = 0, sx2 = 0;
+      arr.forEach(p => {
+        sx += p.x;
+        sy += p.y;
+        sxy += p.x * p.y;
+        sx2 += p.x * p.x;
+      });
+      const denom = n * sx2 - sx * sx;
+      if (denom === 0) return { slope: 0, intercept: 0 };
+      const slope = (n * sxy - sx * sy) / denom;
+      const intercept = (sy - slope * sx) / n;
+      return { slope, intercept };
+    }
+
+    // ======= Drawing ==============
+    function draw() {
+      const canvas = document.getElementById('plot');
+      const width = canvas.parentElement.offsetWidth;
+      const height = 400;
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, width, height);
+
+      // Axes range
+      const minX = 0, maxX = 100, minY = -20, maxY = 120;
+      function mapX(x) { return (x - minX) / (maxX - minX) * width; }
+      function mapY(y) { return height - (y - minY) / (maxY - minY) * height; }
+
+      // Draw threshold lines if applicable
+      const mech = mechSelect.value;
+      ctx.strokeStyle = '#6366f1';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3,3]);
+      if (["byX","byXorY"].includes(mech)) {
+        ctx.beginPath();
+        ctx.moveTo(mapX(xMin), mapY(minY));
+        ctx.lineTo(mapX(xMin), mapY(maxY));
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(mapX(xMax), mapY(minY));
+        ctx.lineTo(mapX(xMax), mapY(maxY));
+        ctx.stroke();
+
+        ctx.fillStyle = '#6366f1';
+        ctx.font = '12px Inter';
+        ctx.textAlign = 'center';
+        ctx.fillText(`X=${xMin}`, mapX(xMin), 15);
+        ctx.fillText(`X=${xMax}`, mapX(xMax), 15);
+      }
+
+      if (["byY","byXorY"].includes(mech)) {
+        ctx.beginPath();
+        ctx.moveTo(mapX(minX), mapY(yMin));
+        ctx.lineTo(mapX(maxX), mapY(yMin));
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(mapX(minX), mapY(yMax));
+        ctx.lineTo(mapX(maxX), mapY(yMax));
+        ctx.stroke();
+
+        ctx.save();
+        ctx.translate(15, mapY(yMin));
+        ctx.rotate(-Math.PI/2);
+        ctx.textAlign = 'center';
+        ctx.fillText(`Y=${yMin}`, 0, 0);
+        ctx.restore();
+
+        ctx.save();
+        ctx.translate(15, mapY(yMax));
+        ctx.rotate(-Math.PI/2);
+        ctx.textAlign = 'center';
+        ctx.fillText(`Y=${yMax}`, 0, 0);
+        ctx.restore();
+      }
+      ctx.setLineDash([]);
+
+      // Draw missing points (gray)
+      ctx.fillStyle = "#6b7280";
+      points.forEach(p => {
+        if (p.missing) {
+          ctx.beginPath();
+          ctx.arc(mapX(p.x), mapY(p.y), 4, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+      });
+
+      // Draw observed points (orange)
+      ctx.fillStyle = "#f97316";
+      points.filter(p => !p.missing).forEach(p => {
+        ctx.beginPath();
+        ctx.arc(mapX(p.x), mapY(p.y), 4, 0, 2 * Math.PI);
+        ctx.fill();
+      });
+
+      // Draw true regression line (green, dashed)
+      ctx.strokeStyle = "#22c55e";
+      ctx.lineWidth = 3;
+      ctx.setLineDash([8, 4]);
+      ctx.beginPath();
+      ctx.moveTo(mapX(minX), mapY(trueSlope * minX));
+      ctx.lineTo(mapX(maxX), mapY(trueSlope * maxX));
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Draw observed regression line (yellow)
+      const observed = points.filter(p => !p.missing);
+      let obsSlope = 0, obsInt = 0;
+      if (observed.length > 1) {
+        const { slope, intercept } = regression(observed);
+        obsSlope = slope;
+        obsInt = intercept;
+        ctx.strokeStyle = "#facc15";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(mapX(minX), mapY(obsSlope * minX + obsInt));
+        ctx.lineTo(mapX(maxX), mapY(obsSlope * maxX + obsInt));
+        ctx.stroke();
+      }
+
+      // Update coefficients
+      coefTrue.textContent = trueSlope.toFixed(2);
+      coefObs.textContent = obsSlope.toFixed(2);
+      const biasValue = obsSlope - trueSlope;
+      bias.textContent = (biasValue >= 0 ? '+' : '') + biasValue.toFixed(2);
+
+      // Color bias based on magnitude
+      if (Math.abs(biasValue) < 0.05) bias.className = "text-green-400 text-2xl font-mono font-bold";
+      else if (Math.abs(biasValue) < 0.15) bias.className = "text-yellow-400 text-2xl font-mono font-bold";
+      else bias.className = "text-red-400 text-2xl font-mono font-bold";
+
+      // Axis labels
+      ctx.fillStyle = '#9ca3af';
+      ctx.font = '14px Inter';
+      ctx.textAlign = 'center';
+      ctx.fillText('X', width / 2, height - 10);
+      ctx.save();
+      ctx.translate(18, height / 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillText('Y', 0, 0);
+      ctx.restore();
+
+      // Explanation
+      if (mech === "flatten") {
+        explanation.textContent = "Missing opposite-diagonal ⇒ β̂ ↓";
+      } else if (mech === "steepen") {
+        explanation.textContent = "Missing near-diagonal quadrants ⇒ β̂ ↑";
+      } else if (mech === "byX") {
+        explanation.textContent = "Missing X. Unbiased β";
+      } else if (mech === "byY") {
+        explanation.textContent = "Missing Y ⇒ β̂ ↓";
+      } else if (mech === "byXorY") {
+        explanation.textContent = "Missing X or Y ⇒ β̂ ↓";
+      } else {
+        explanation.textContent = "";
+      }
+    }
+
+    // ============ UI Elements ===============
+    const missSlider = document.getElementById('missSlider');
+    const missValue = document.getElementById('missValue');
+    const mechSelect = document.getElementById('mechSelect');
+    const xThreshDiv = document.getElementById('xThreshDiv');
+    const yThreshDiv = document.getElementById('yThreshDiv');
+    const coefTrue = document.getElementById('coefTrue');
+    const coefObs = document.getElementById('coefObs');
+    const bias = document.getElementById('bias');
+    const explanation = document.getElementById('explanation');
+    const resample = document.getElementById('resample');
+
+    // =========== Events ============
+    missSlider.addEventListener('input', () => {
+      missValue.textContent = missSlider.value + "%";
+      applyMissing(); draw();
+    });
+    mechSelect.addEventListener('change', () => {
+      updateThresholds();
+      applyMissing(); draw();
+    });
+    resample.addEventListener('click', () => {
+      generateData(); applyMissing(); draw();
+    });
+    window.addEventListener('resize', draw);
+
+    function updateThresholds() {
+      let mech = mechSelect.value;
+      xThreshDiv.classList.toggle('hidden', !["byX","byXorY"].includes(mech));
+      yThreshDiv.classList.toggle('hidden', !["byY","byXorY"].includes(mech));
+    }
+
+    // Setup range sliders
+    setupRangeSlider('xRangeSlider', 'xMinHandle', 'xMaxHandle', 'xRangeTrack', 0, 100,
+      (min, max) => {
+        xMin = min;
+        xMax = max;
+        document.getElementById('xRangeVal').textContent = `[${min}, ${max}]`;
+        document.getElementById('xMinText').textContent = min;
+        document.getElementById('xMaxText').textContent = max;
+      }
+    );
+    setupRangeSlider('yRangeSlider', 'yMinHandle', 'yMaxHandle', 'yRangeTrack', 0, 100,
+      (min, max) => {
+        yMin = min;
+        yMax = max;
+        document.getElementById('yRangeVal').textContent = `[${min}, ${max}]`;
+        document.getElementById('yMinText').textContent = min;
+        document.getElementById('yMaxText').textContent = max;
+      }
+    );
+
+    // ========== Initialize ==========
+    generateData();
+    updateThresholds();
+    applyMissing();
+    draw();
+
+  </script>
+</body>
+</html>
