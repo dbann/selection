@@ -6,6 +6,8 @@ Move the sliders, watch β̂ diverge from the truth, and build intuition about M
 
 ![Screenshot of the visualiser in action](screenshot.jpg)
 
+![Demo](https://i.imgur.com/selection_demo.gif)
+
 ## Features
 - **Percent-missing slider** plus presets for MCAR, MNAR-by-X, MNAR-by-Y, `X ∨ Y`, *Flatten* and *Steepen*.
 - Live read-outs of **β<sub>true</sub>**, **β̂**, and a colour-coded bias gauge.
