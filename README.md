@@ -4,8 +4,6 @@ Move the sliders, watch β̂ diverge from the truth, and build intuition about M
 
 **▶️ [Live demo](https://dbann.github.io/selection/)**
 
-![Screenshot of the visualiser in action](screenshot.jpg)
-
 ![Demo](selection_demo.gif)
 
 ## Features
