@@ -129,6 +129,10 @@
             <span class="text-gray-400 text-sm md:text-base">Bias:</span>
             <span id="bias" class="text-red-400 text-xl md:text-2xl font-mono font-bold">0.00</span>
           </div>
+          <div>
+            <span class="text-gray-400 text-sm md:text-base">SE:</span>
+            <span id="se" class="text-blue-400 text-xl md:text-2xl font-mono font-bold">0.00</span>
+          </div>
         </div>
         <div class="bg-gray-900 rounded-lg border border-gray-700 overflow-hidden" style="position:relative;">
           <canvas id="plot"></canvas>
@@ -312,7 +316,7 @@
 
     // ======== Regression ===========
     function regression(arr) {
-      if (arr.length < 2) return { slope: 0, intercept: 0 };
+      if (arr.length < 2) return { slope: 0, intercept: 0, se: 0 };
       const n = arr.length;
       let sx = 0, sy = 0, sxy = 0, sx2 = 0;
       arr.forEach(p => {
@@ -322,10 +326,20 @@
         sx2 += p.x * p.x;
       });
       const denom = n * sx2 - sx * sx;
-      if (denom === 0) return { slope: 0, intercept: 0 };
+      if (denom === 0) return { slope: 0, intercept: 0, se: 0 };
       const slope = (n * sxy - sx * sy) / denom;
       const intercept = (sy - slope * sx) / n;
-      return { slope, intercept };
+      
+      // Calculate standard error of the slope
+      let ssr = 0; // sum of squared residuals
+      arr.forEach(p => {
+        const yPred = slope * p.x + intercept;
+        ssr += Math.pow(p.y - yPred, 2);
+      });
+      const mse = ssr / (n - 2); // mean squared error
+      const se = Math.sqrt(mse * n / denom);
+      
+      return { slope, intercept, se };
     }
 
     // ======= Drawing ==============
@@ -438,11 +452,12 @@
 
       // Draw observed regression line (yellow)
       const observed = points.filter(p => !p.missing);
-      let obsSlope = 0, obsInt = 0;
+      let obsSlope = 0, obsInt = 0, obsSE = 0;
       if (observed.length > 1) {
-        const { slope, intercept } = regression(observed);
+        const { slope, intercept, se } = regression(observed);
         obsSlope = slope;
         obsInt = intercept;
+        obsSE = se;
         ctx.strokeStyle = "#facc15";
         ctx.lineWidth = lineWidth;
         ctx.beginPath();
@@ -456,6 +471,12 @@
       coefObs.textContent = obsSlope.toFixed(2);
       const biasValue = obsSlope - trueSlope;
       bias.textContent = (biasValue >= 0 ? '+' : '') + biasValue.toFixed(2);
+      // Display SE with appropriate precision based on its magnitude
+      if (observed.length > 2) {
+        se.textContent = obsSE < 0.01 ? obsSE.toExponential(2) : obsSE.toFixed(3);
+      } else {
+        se.textContent = "N/A";
+      }
 
       // Color bias based on magnitude
       const biasClasses = "text-xl md:text-2xl font-mono font-bold";
@@ -476,15 +497,15 @@
 
       // Explanation
       if (mech === "flatten") {
-        explanation.textContent = "Missing opposite-diagonal ⇒ β̂ ↓";
+        explanation.textContent = "Missing opposite-diagonal quadrants. Typically ⇒ β̂ ↓";
       } else if (mech === "steepen") {
-        explanation.textContent = "Missing near-diagonal quadrants ⇒ β̂ ↑";
+        explanation.textContent = "Missing near-diagonal quadrants. Typically ⇒ β̂ ↑";
       } else if (mech === "byX") {
-        explanation.textContent = "Missing X. Unbiased β";
+        explanation.textContent = "Missing X. Typically unbiased β";
       } else if (mech === "byY") {
-        explanation.textContent = "Missing Y ⇒ β̂ ↓";
+        explanation.textContent = "Missing Y. Typically ⇒ β̂ ↓";
       } else if (mech === "byXorY") {
-        explanation.textContent = "Missing X or Y ⇒ β̂ ↓";
+        explanation.textContent = "Missing X or Y. Typically ⇒ β̂ ↓";
       } else {
         explanation.textContent = "";
       }
@@ -499,6 +520,7 @@
     const coefTrue = document.getElementById('coefTrue');
     const coefObs = document.getElementById('coefObs');
     const bias = document.getElementById('bias');
+    const se = document.getElementById('se');
     const explanation = document.getElementById('explanation');
     const resample = document.getElementById('resample');
 
