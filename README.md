@@ -12,6 +12,9 @@ Move the sliders, watch β̂ diverge from the truth, and build intuition about M
 - One-click **resample** to illustrate sampling variability.
 - Single HTML file 
 
+## How was this made?
+With AI!  'vibe coding' - that is, giving the idea to an AI (LLM) and asking it to implement it. I used a combination of LLMs (GPT, claude, gemini), and worked iteratively untill a reasonably useful tool was created - sometimes the LLMs make mistakes (errors, unwanted features etc). It was then hosted on github. 
+
 ## License
 MIT License - see the [LICENSE](LICENSE) file for details.
 
